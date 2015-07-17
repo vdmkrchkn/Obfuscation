@@ -89,8 +89,9 @@ namespace UnitTestObfuscation
             int res = 5;
             ExprGen egen = new ExprGen("i", 11, "j", 7, res);            
             egen.generate(true);
-            Assert.AreEqual(1, egen.e_lg.eval(), "неверный предикат");
-            Assert.AreEqual(res, egen.expr1.eval(), "неверный результат вычисления");
+            Assert.AreEqual(1, egen.Cond.eval(), "неверный предикат");
+            Assert.AreEqual(res, egen.Expr1.eval(), "неверный результат вычисления");
+            Assert.AreEqual(res, egen.Expr2.eval(), "неверный результат вычисления");
         }
 
         [TestMethod]
@@ -99,8 +100,9 @@ namespace UnitTestObfuscation
             int res = 7;
             ExprGen egen = new ExprGen("i", 13, "j", 11, res);
             egen.generate(false);
-            Assert.AreEqual(0, egen.e_lg.eval(), "неверный предикат");
-            Assert.AreEqual(res, egen.expr2.eval(), "неверный результат вычисления");
+            Assert.AreEqual(0, egen.Cond.eval(), "неверный предикат");
+            Assert.AreEqual(res, egen.Expr1.eval(), "неверный результат вычисления");
+            Assert.AreEqual(res, egen.Expr2.eval(), "неверный результат вычисления");
         }
     }
 }
