@@ -17,9 +17,20 @@ namespace Obfuscation
         /// <param name="result">желаемый результат</param>
         public ExprGen(string sx, int nx, string sy, int ny, int result)
         {
-            xId = new IdNode(sx,nx);
-            yId = new IdNode(sy,ny);
+            xId = new IdNode(sx, nx);
+            yId = new IdNode(sy, ny);
             nResult = result;
+            //
+            List<ExprNode> eList = new List<ExprNode>(2);            
+            eList.Add(new BinOpNode(// x > 0
+                        xId, new IntNumNode(0), BinOpType.GT));            
+            eList.Add(new UnOpNode(// !(2 * y & 1)
+                        new BinOpNode(
+                            new BinOpNode(new IntNumNode(2), yId, BinOpType.MULT),
+                            new IntNumNode(1),
+                            BinOpType.bAND),
+                        UnOpType.NOT));            
+            prGen = new PredGen(eList, 2);            
         }        
         /// <summary>
         /// Генерация
@@ -29,31 +40,22 @@ namespace Obfuscation
         public virtual string generate(bool isPredTrue)
         {
             // формирование условного выражения
-            if (!isPredTrue)
-                e_lg = new BinOpNode(// x * x * (x + 1) * (x + 1) % 4 == 0
+            Cond = prGen.getPred(isPredTrue);                            
+            // формирование 1-го выражения
+            if(nResult == 0 && ((xId.eval() & 1) == 0 || (yId.eval() & 1) != 0) 
+				|| (nResult == 1 && ((xId.eval() & 1) != 0) && (yId.eval() & 1) == 0))
+                Expr1 = new BinOpNode(// x * x * (x + y) * (x + y) % 4
                     new BinOpNode(
                         new BinOpNode(
-                            new BinOpNode(yId, yId, BinOpType.MULT),
-                            new BinOpNode(yId, new IntNumNode(1), BinOpType.PLUS),
+                            new BinOpNode(xId, xId, BinOpType.MULT),
+                            new BinOpNode(yId, xId, BinOpType.PLUS),
                             BinOpType.MULT),
-                        new BinOpNode(yId, new IntNumNode(1), BinOpType.PLUS),
+                        new BinOpNode(yId, xId, BinOpType.PLUS),
                         BinOpType.MULT),
                     new IntNumNode(4),
                     BinOpType.MOD);
-            else
-                e_lg = new BinOpNode(// (x [<=|>] 0) && !(2 * y & 1) == 1
-                    new BinOpNode(
-                        xId, new IntNumNode(0), xId.eval() <= 0 ? BinOpType.LE : BinOpType.GT),
-                    new UnOpNode(
-                        new BinOpNode(
-                            new BinOpNode(new IntNumNode(2), yId, BinOpType.MULT),
-                            new IntNumNode(1),
-                            BinOpType.bAND),
-                        UnOpType.NOT),
-                    BinOpType.AND);
-            // формирование 1-го выражения        
-            if (yId.eval() != 0)
-                expr1 = new BinOpNode(// y * (x - (x - nResult)) / y;
+            else if (yId.eval() != 0)
+                Expr1 = new BinOpNode(// y * (x - (x - nResult)) / y;
                     new BinOpNode(
                         yId,
                         new BinOpNode(
@@ -64,18 +66,23 @@ namespace Obfuscation
                     yId,
                     BinOpType.DIV);
             else
-                expr1 = new IntNumNode(nResult);
+                Expr1 = new BinOpNode(yId, new IntNumNode(nResult),BinOpType.PLUS);
             // формирование 2-го выражения          
-            expr2 = new IntNumNode(nResult + new Random().Next(10, 21));
+            Expr2 = new BinOpNode(// x * x - c * x + nResult
+                new BinOpNode(
+                    new BinOpNode(xId,xId,BinOpType.MULT),
+                    new BinOpNode(new IntNumNode(xId.eval()),xId,BinOpType.MULT),
+                    BinOpType.MINUS),
+                new IntNumNode(nResult), BinOpType.PLUS);
             int a, b;
             if (hasLinearSln(xId.eval(), yId.eval(), nResult, out a, out b))
-                if (a != 0 && b != 0)
-                    expr2 = new BinOpNode(// a * x + b * y
+                if (a != 0 && b != 0) // есть неоднородные решения
+                    Expr2 = new BinOpNode(// a * x + b * y
                         new BinOpNode(new IntNumNode(a), xId, BinOpType.MULT),
                         new BinOpNode(new IntNumNode(b), yId, BinOpType.MULT),
                         BinOpType.PLUS);            
             return String.Format("({0} ? {1} : {2})",
-                e_lg, isPredTrue ? expr1 : expr2, isPredTrue ? expr2 : expr1);
+                Cond, isPredTrue ? Expr1 : Expr2, isPredTrue ? Expr2 : Expr1);
         }
         // вывод конфигурации
         public override string ToString()
@@ -135,6 +142,66 @@ namespace Obfuscation
         //
         protected IdNode xId, yId;  // входящие в выражение переменные        
         protected int nResult;	    // результат
-        public ExprNode e_lg, expr1, expr2;
+        public ExprNode Cond { get; protected set; }
+        public ExprNode Expr1 { get; protected set; }
+        public ExprNode Expr2 { get; protected set; }
+        protected PredGen prGen;
+    }
+
+    public class PredGen // генератор предикатов
+    {
+        /// <summary>
+        /// Построение таблицы предикатов
+        /// </summary>
+        /// <param name="simpleExprs">набор различных простых предикатов</param>        
+        /// <param name="k">уровень таблицы</param>
+        public PredGen(List<ExprNode> simpleExprs, int k)
+        {
+            table = new List<List<ExprNode>>(k);
+            // age = 1
+            List<ExprNode> exprList = new List<ExprNode>();
+            foreach (ExprNode e in simpleExprs)
+            {
+                exprList.Add(e);
+                exprList.Add(new UnOpNode(e, UnOpType.NOT));
+            }
+            table.Add(exprList);
+            // 2 <= age <= k
+            for (int age = 1; age < k; ++age)
+            {
+                exprList = new List<ExprNode>();
+                for (int i = 0; i < table[age-1].Count; ++i)
+                    for (int j = i + 1; j < table[age - 1].Count; ++j)
+                    {
+                        exprList.Add(new BinOpNode(table[age - 1][i], table[age - 1][j],
+                            BinOpType.OR));
+                        exprList.Add(new BinOpNode(table[age - 1][i], table[age - 1][j],
+                            BinOpType.AND));
+                    }
+                table.Add(exprList);
+            }
+        }
+        /// <summary>
+        /// Вывод таблицы на экран
+        /// </summary>
+        public void printTable()
+        {
+            for(int i = 0; i < table.Count; ++i)
+            {
+                Console.WriteLine("Age = " + (i + 1));
+                Console.WriteLine();
+                foreach (ExprNode expr in table[i])
+                    Console.WriteLine(expr);
+            }
+        }
+        // получение случайного предиката, удовлетворяющего pred
+        public ExprNode getPred(bool pred)
+        {            
+            var res = table.Last().Where(expr => expr.eval() == (pred ? 1 : 0));
+            Random rnd = new Random();
+            return res.ElementAt(rnd.Next(res.Count()));
+        }
+        //
+        List<List<ExprNode>> table; // таблица предикатов
     }
 }
