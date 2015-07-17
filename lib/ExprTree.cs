@@ -30,7 +30,7 @@ namespace Obfuscation
         string Name { get; set; }
         int value;
 
-        public IdNode(string name, int val)
+        public IdNode(string name, int val = 0)
         {
             Name = name;
             value = val;
